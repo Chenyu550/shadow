@@ -52,6 +52,9 @@ stage_deps() { # rootful-legacy|rootful-modern|rootless|roothide
     if [ -n "$xpc" ]; then
         [ -d "$xpc" ] || { echo "set XPC_HEADERS to an xpc headers directory" >&2; return 1; }
         cp -R "$xpc" "$INCLUDE_PATH/"
+        # Keep Xcode's SDK module definition and override only the textual
+        # headers. Shipping both module maps redefines the XPC module.
+        rm -f "$INCLUDE_PATH/xpc/module.modulemap"
     fi
 
     if [ -n "$scheme" ]; then
