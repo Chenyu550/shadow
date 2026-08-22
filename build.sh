@@ -16,7 +16,7 @@ rm -rf "$ROOT/build"
 mkdir -p "$ROOT/build"
 
 stage_deps() { # rootful-legacy|rootful-modern|rootless|roothide
-    local profile=$1 source_profile=$1 scheme= xpc=
+    local profile=$1 source_profile=$1 scheme= xpc= preferences=
     case "$profile" in
         rootful-legacy|rootful-modern) ;;
         rootless) scheme=rootless ;;
@@ -47,6 +47,7 @@ stage_deps() { # rootful-legacy|rootful-modern|rootless|roothide
             ;;
         rootless)
             xpc=${XPC_HEADERS:-${PATCHED_SDKS_PATH:-$THEOS/sdks}/iPhoneOS16.5.sdk/usr/include/xpc}
+            preferences=${PATCHED_SDKS_PATH:-$THEOS/sdks}/iPhoneOS16.5.sdk/System/Library/PrivateFrameworks/Preferences.framework
             ;;
     esac
     if [ -n "$xpc" ]; then
@@ -56,12 +57,17 @@ stage_deps() { # rootful-legacy|rootful-modern|rootless|roothide
         # headers. Shipping both module maps redefines the XPC module.
         rm -f "$INCLUDE_PATH/xpc/module.modulemap"
     fi
+    if [ -n "$preferences" ]; then
+        [ -d "$preferences" ] || { echo "missing patched Preferences.framework: $preferences" >&2; return 1; }
+        cp -R "$preferences" "$LIBRARY_PATH/Preferences.framework"
+    fi
 
     if [ -n "$scheme" ]; then
         mkdir -p "$LIBRARY_PATH/iphone/$scheme"
         cp -R "$hookkit" "$LIBRARY_PATH/iphone/$scheme/HookKit.framework"
         cp -R "$altlist" "$LIBRARY_PATH/iphone/$scheme/AltList.framework"
         cp "$sandy" "$LIBRARY_PATH/iphone/$scheme/libsandy.dylib"
+        [ -z "$preferences" ] || cp -R "$preferences" "$LIBRARY_PATH/iphone/$scheme/Preferences.framework"
     fi
 
     scripts/check-binary-compat.sh "$profile" \
