@@ -63,34 +63,40 @@ jobs:
           p.write_text(s.replace(old, new))
           PY
 
-      - name: Add XPC headers to iOS 16.5 SDK
+      - name: Vendor jailbreak XPC headers
         shell: bash
         run: |
           set -euo pipefail
 
-          DST="$THEOS/sdks/iPhoneOS16.5.sdk/usr/include"
-          IOS_SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
-          MAC_SDK="$(xcrun --sdk macosx --show-sdk-path)"
+          curl -fL \
+            https://github.com/Cryptiiiic/libjbdrw/archive/73fa4bb1bbd515ad11a96141ee9e8478f6146a15.tar.gz \
+            -o "$RUNNER_TEMP/libjbdrw.tar.gz"
 
-          mkdir -p "$DST"
+          tar -xzf "$RUNNER_TEMP/libjbdrw.tar.gz" \
+            -C "$RUNNER_TEMP"
 
-          # Prefer the current Xcode iPhoneOS SDK.
-          if [ -d "$IOS_SDK/usr/include/xpc" ]; then
-            echo "Using XPC headers from iPhoneOS SDK:"
-            echo "$IOS_SDK/usr/include/xpc"
-            cp -R "$IOS_SDK/usr/include/xpc" "$DST/"
-          elif [ -d "$MAC_SDK/usr/include/xpc" ]; then
-            echo "iPhoneOS SDK has no XPC headers; falling back to macOS SDK:"
-            echo "$MAC_SDK/usr/include/xpc"
-            cp -R "$MAC_SDK/usr/include/xpc" "$DST/"
-          else
-            echo "Could not find XPC headers in Xcode SDKs"
+          # Remove the modern Xcode headers copied by previous attempts.
+          sudo rm -rf \
+            "$THEOS/sdks/iPhoneOS16.5.sdk/usr/include/xpc"
+
+          # Install the private/jailbreak-compatible XPC headers.
+          sudo cp -R \
+            "$RUNNER_TEMP/libjbdrw-73fa4bb1bbd515ad11a96141ee9e8478f6146a15/include/xpc" \
+            "$THEOS/sdks/iPhoneOS16.5.sdk/usr/include/"
+
+          echo "Checking XPC headers..."
+          grep -n -A4 -B4 \
+            "xpc_connection_create_mach_service" \
+            "$THEOS/sdks/iPhoneOS16.5.sdk/usr/include/xpc/connection.h" \
+            | head -40
+
+          if grep -A3 -B3 \
+            "xpc_connection_create_mach_service" \
+            "$THEOS/sdks/iPhoneOS16.5.sdk/usr/include/xpc/connection.h" \
+            | grep -q "API_UNAVAILABLE(ios)"; then
+            echo "ERROR: wrong XPC headers installed"
             exit 1
           fi
-
-          echo "Installed XPC headers:"
-          ls -la "$DST/xpc"
-          test -f "$DST/xpc/xpc.h"
       - name: Build rootless dependencies
         run: |
           .github/scripts/build-deps.sh rootless
