@@ -73,7 +73,12 @@ legacy_args() {
 
 prepare_scheme_framework() { # rootless|roothide
     local lane=$1
-    make -C Shadow.framework "SHADOW_LANE=$lane" "${MAKE_PATHS[@]}"
+    make -C Shadow.framework \
+        "SHADOW_LANE=$lane" \
+        'ARCHS=arm64 arm64e' \
+        'TARGET=iphone:clang:latest:15.0' \
+        "THEOS_PACKAGE_SCHEME=$lane" \
+        "${MAKE_PATHS[@]}"
     rm -rf "$LIBRARY_PATH/iphone/$lane/Shadow.framework"
     mkdir -p "$LIBRARY_PATH/iphone/$lane"
     cp -R Shadow.framework/.theos/obj/debug/Shadow.framework "$LIBRARY_PATH/iphone/$lane/"
