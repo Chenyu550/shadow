@@ -2,6 +2,9 @@ name: Build Shadow 4 Rootless
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches:
+      - master
   push:
     branches:
       - master
@@ -19,52 +22,24 @@ jobs:
 
       - name: Install tools
         run: |
+          set -euo pipefail
           brew install dpkg ldid
           sudo git clone --recursive --quiet https://github.com/roothide/theos.git "$THEOS"
 
       - name: Install patched iOS 16.5 SDK
         run: |
-          sudo mkdir -p "$THEOS/sdks"
+          set -euo pipefail
+          sdk_root="$RUNNER_TEMP/shadow-sdks"
+          mkdir -p "$sdk_root"
+
           curl -fL \
             https://github.com/theos/sdks/releases/download/master-146e41f/iPhoneOS16.5.sdk.tar.xz \
             -o "$RUNNER_TEMP/iPhoneOS16.5.sdk.tar.xz"
 
-          sudo tar -xJf "$RUNNER_TEMP/iPhoneOS16.5.sdk.tar.xz" \
-            -C "$THEOS/sdks"
-
-      - name: Force patched SDK
-        run: |
-          sed -i '' 's/iphone:clang:latest:15.0/iphone:clang:16.5:15.0/g' \
-            Makefile \
-            build.sh \
-            .github/scripts/build-deps.sh
-      - name: Fix BSD sed compatibility
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          p = Path(".github/scripts/build-deps.sh")
-          s = p.read_text()
-
-          old = '''        sed "/^Architecture:/a Depends: firmware (>= $floor)" "$source" > "$output"'''
-
-          new = '''        awk -v floor="$floor" '
-                  /^Architecture:/ {
-                      print
-                      print "Depends: firmware (>= " floor ")"
-                      next
-                  }
-                  { print }
-              ' "$source" > "$output"'''
-
-          if old not in s:
-              raise SystemExit("Expected sed line not found")
-
-          p.write_text(s.replace(old, new))
-          PY
+          tar -xJf "$RUNNER_TEMP/iPhoneOS16.5.sdk.tar.xz" -C "$sdk_root"
+          echo "PATCHED_SDKS_PATH=$sdk_root" >> "$GITHUB_ENV"
 
       - name: Vendor jailbreak XPC headers
-        shell: bash
         run: |
           set -euo pipefail
 
@@ -72,42 +47,32 @@ jobs:
             https://github.com/Cryptiiiic/libjbdrw/archive/73fa4bb1bbd515ad11a96141ee9e8478f6146a15.tar.gz \
             -o "$RUNNER_TEMP/libjbdrw.tar.gz"
 
-          tar -xzf "$RUNNER_TEMP/libjbdrw.tar.gz" \
-            -C "$RUNNER_TEMP"
+          tar -xzf "$RUNNER_TEMP/libjbdrw.tar.gz" -C "$RUNNER_TEMP"
 
-          # Remove the modern Xcode headers copied by previous attempts.
-          sudo rm -rf \
-            "$THEOS/sdks/iPhoneOS16.5.sdk/usr/include/xpc"
-
-          # Install the private/jailbreak-compatible XPC headers.
-          sudo cp -R \
+          rm -rf "$PATCHED_SDKS_PATH/iPhoneOS16.5.sdk/usr/include/xpc"
+          cp -R \
             "$RUNNER_TEMP/libjbdrw-73fa4bb1bbd515ad11a96141ee9e8478f6146a15/include/xpc" \
-            "$THEOS/sdks/iPhoneOS16.5.sdk/usr/include/"
+            "$PATCHED_SDKS_PATH/iPhoneOS16.5.sdk/usr/include/"
 
-          echo "Checking XPC headers..."
-          grep -n -A4 -B4 \
-            "xpc_connection_create_mach_service" \
-            "$THEOS/sdks/iPhoneOS16.5.sdk/usr/include/xpc/connection.h" \
-            | head -40
+          xpc_header="$PATCHED_SDKS_PATH/iPhoneOS16.5.sdk/usr/include/xpc/connection.h"
+          test -f "$xpc_header"
+          grep -q "xpc_connection_create_mach_service" "$xpc_header"
 
           if grep -A3 -B3 \
-            "xpc_connection_create_mach_service" \
-            "$THEOS/sdks/iPhoneOS16.5.sdk/usr/include/xpc/connection.h" \
+            "xpc_connection_create_mach_service" "$xpc_header" \
             | grep -q "API_UNAVAILABLE(ios)"; then
             echo "ERROR: wrong XPC headers installed"
             exit 1
           fi
+
       - name: Build rootless dependencies
-        run: |
-          .github/scripts/build-deps.sh rootless
+        run: .github/scripts/build-deps.sh rootless
 
       - name: Build Shadow rootless
-        run: |
-          ./build.sh rootless
+        run: ./build.sh rootless
 
       - name: Show packages
-        run: |
-          ls -lah build/
+        run: ls -lah build/
 
       - name: Upload DEBs
         uses: actions/upload-artifact@v4

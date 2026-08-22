@@ -16,7 +16,7 @@ rm -rf "$ROOT/build"
 mkdir -p "$ROOT/build"
 
 stage_deps() { # rootful-legacy|rootful-modern|rootless|roothide
-    local profile=$1 source_profile=$1 scheme=
+    local profile=$1 source_profile=$1 scheme= xpc= preferences=
     case "$profile" in
         rootful-legacy|rootful-modern) ;;
         rootless) scheme=rootless ;;
@@ -41,10 +41,25 @@ stage_deps() { # rootful-legacy|rootful-modern|rootless|roothide
     if [ -f "$PB/sandy/$source_profile/libSandy.h" ]; then
         cp "$PB/sandy/$source_profile/libSandy.h" "$INCLUDE_PATH/libSandy.h"
     fi
-    if [ "$profile" = rootful-legacy ]; then
-        local xpc=${XPC_HEADERS:-$THEOS/sdks/iPhoneOS14.5.sdk/usr/include/xpc}
+    case "$profile" in
+        rootful-legacy)
+            xpc=${XPC_HEADERS:-$THEOS/sdks/iPhoneOS14.5.sdk/usr/include/xpc}
+            ;;
+        rootless)
+            xpc=${XPC_HEADERS:-${PATCHED_SDKS_PATH:-$THEOS/sdks}/iPhoneOS16.5.sdk/usr/include/xpc}
+            preferences=${PATCHED_SDKS_PATH:-$THEOS/sdks}/iPhoneOS16.5.sdk/System/Library/PrivateFrameworks/Preferences.framework
+            ;;
+    esac
+    if [ -n "$xpc" ]; then
         [ -d "$xpc" ] || { echo "set XPC_HEADERS to an xpc headers directory" >&2; return 1; }
         cp -R "$xpc" "$INCLUDE_PATH/"
+        # Keep Xcode's SDK module definition and override only the textual
+        # headers. Shipping both module maps redefines the XPC module.
+        rm -f "$INCLUDE_PATH/xpc/module.modulemap"
+    fi
+    if [ -n "$preferences" ]; then
+        [ -d "$preferences" ] || { echo "missing patched Preferences.framework: $preferences" >&2; return 1; }
+        cp -R "$preferences" "$LIBRARY_PATH/Preferences.framework"
     fi
 
     if [ -n "$scheme" ]; then
@@ -52,6 +67,7 @@ stage_deps() { # rootful-legacy|rootful-modern|rootless|roothide
         cp -R "$hookkit" "$LIBRARY_PATH/iphone/$scheme/HookKit.framework"
         cp -R "$altlist" "$LIBRARY_PATH/iphone/$scheme/AltList.framework"
         cp "$sandy" "$LIBRARY_PATH/iphone/$scheme/libsandy.dylib"
+        [ -z "$preferences" ] || cp -R "$preferences" "$LIBRARY_PATH/iphone/$scheme/Preferences.framework"
     fi
 
     scripts/check-binary-compat.sh "$profile" \
@@ -73,7 +89,12 @@ legacy_args() {
 
 prepare_scheme_framework() { # rootless|roothide
     local lane=$1
-    make -C Shadow.framework "SHADOW_LANE=$lane" "${MAKE_PATHS[@]}"
+    make -C Shadow.framework \
+        "SHADOW_LANE=$lane" \
+        'ARCHS=arm64 arm64e' \
+        'TARGET=iphone:clang:latest:15.0' \
+        "THEOS_PACKAGE_SCHEME=$lane" \
+        "${MAKE_PATHS[@]}"
     rm -rf "$LIBRARY_PATH/iphone/$lane/Shadow.framework"
     mkdir -p "$LIBRARY_PATH/iphone/$lane"
     cp -R Shadow.framework/.theos/obj/debug/Shadow.framework "$LIBRARY_PATH/iphone/$lane/"

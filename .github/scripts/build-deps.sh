@@ -5,6 +5,7 @@ set -euo pipefail
 FLAVOR=${1:?usage: build-deps.sh <rootful-legacy|rootful-modern|rootless|roothide>}
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 export THEOS=${THEOS:-/opt/theos}
+PATCHED_SDKS_PATH=${PATCHED_SDKS_PATH:-$THEOS/sdks}
 PB=${PREBUILT_ROOT:-$ROOT/../prebuilt}
 WORK_BASE=${WORK:-/tmp}
 RUN=$(mktemp -d "$WORK_BASE/shadow-deps.XXXXXX")
@@ -29,7 +30,7 @@ case "$FLAVOR" in
         ;;
     rootless)
         ARCHS='arm64 arm64e'
-        TARGET=iphone:clang:latest:15.0
+        TARGET=iphone:clang:16.5:15.0
         FLOOR=15.0
         SCHEME=rootless
         ;;
@@ -41,6 +42,13 @@ case "$FLAVOR" in
         ;;
     *) echo "unknown flavor: $FLAVOR" >&2; exit 2 ;;
 esac
+
+if [ "$FLAVOR" = rootless ]; then
+    [ -d "$PATCHED_SDKS_PATH/iPhoneOS16.5.sdk" ] || {
+        echo "rootless requires iPhoneOS16.5.sdk under $PATCHED_SDKS_PATH" >&2
+        exit 1
+    }
+fi
 
 if [ "$FLAVOR" != rootful-legacy ]; then
     [ "$(uname -s)" = Darwin ] || {
@@ -109,7 +117,14 @@ write_control_floor() { # source control, output, floor
     if grep -q '^Depends:.*firmware' "$source"; then
         sed -E "s/firmware \(>= [0-9.]+\)/firmware (>= $floor)/" "$source" > "$output"
     else
-        sed "/^Architecture:/a Depends: firmware (>= $floor)" "$source" > "$output"
+        awk -v floor="$floor" '
+            /^Architecture:/ {
+                print
+                print "Depends: firmware (>= " floor ")"
+                next
+            }
+            { print }
+        ' "$source" > "$output"
     fi
 }
 
@@ -122,6 +137,7 @@ common_make_args() {
         "ADDITIONAL_OBJCFLAGS=-fmodules-cache-path=$RUN/module-cache"
     )
     [ -z "$SCHEME" ] || MAKE_ARGS+=("THEOS_PACKAGE_SCHEME=$SCHEME")
+    [ "$FLAVOR" != rootless ] || MAKE_ARGS+=("THEOS_SDKS_PATH=$PATCHED_SDKS_PATH")
 }
 
 legacy_make_args() {
@@ -151,27 +167,20 @@ legacy_make_args() {
 }
 
 build_hookkit() {
-    if [ "$FLAVOR" = rootful-legacy ]; then
-        if [ -n "${HOOKKIT_LEGACY_DEB:-}" ]; then
-            [ -f "$HOOKKIT_LEGACY_DEB" ] || { echo "HOOKKIT_LEGACY_DEB does not exist" >&2; exit 1; }
-            stage_package hookkit "$HOOKKIT_LEGACY_DEB"
-            return
-        fi
-
-        clone_pin jjolano/HookKit "$HOOKKIT" hookkit
-        local source=$RUN/hookkit deb
-        (cd "$source" && ./build.sh rootful-legacy)
-        deb=$source/build/hookkit-rootful-legacy.deb
-        stage_package hookkit "$deb"
+    if [ "$FLAVOR" = rootful-legacy ] && [ -n "${HOOKKIT_LEGACY_DEB:-}" ]; then
+        [ -f "$HOOKKIT_LEGACY_DEB" ] || { echo "HOOKKIT_LEGACY_DEB does not exist" >&2; exit 1; }
+        stage_package hookkit "$HOOKKIT_LEGACY_DEB"
         return
     fi
 
     clone_pin jjolano/HookKit "$HOOKKIT" hookkit
-    local source=$RUN/hookkit control=$RUN/hookkit.control deb
-    write_control_floor "$source/control" "$control" "$FLOOR"
-    (cd "$source" && make clean && make package FINALPACKAGE=1 "${MAKE_ARGS[@]}" \
-        "_THEOS_DEB_PACKAGE_CONTROL_PATH=$control")
-    deb=$(package_path "$source")
+    local source=$RUN/hookkit deb
+    (cd "$source" && ./build.sh "$FLAVOR")
+    deb=$source/build/hookkit-$FLAVOR.deb
+    [ -f "$deb" ] || {
+        echo "HookKit artifact missing: $deb" >&2
+        exit 1
+    }
     stage_package hookkit "$deb"
 }
 
