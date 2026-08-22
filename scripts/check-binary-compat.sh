@@ -73,14 +73,17 @@ for binary in "$@"; do
         }
 
         if [ "$arch" = arm64e ]; then
-            header=$($OTOOL -hv "$slice" | tail -n 1)
             if [ "$PROFILE" = rootful-legacy ]; then
-                abi=0x00
+                abi=00
             else
-                abi=0x80
+                abi=80
             fi
-            printf '%s\n' "$header" | grep -Eq "[[:space:]]E[[:space:]]+${abi}[[:space:]]" || {
-                echo "$binary [$arch] does not use the expected $PROFILE ABI" >&2
+            # cpusubtype is the third 32-bit field in a little-endian
+            # 64-bit Mach-O header. Its high capability byte is 0x80 for
+            # versioned arm64e and 0x00 for the legacy preview ABI.
+            capability=$(od -An -tx1 -j 11 -N 1 "$slice" | tr -d '[:space:]')
+            [ "$capability" = "$abi" ] || {
+                echo "$binary [$arch] has ABI capability 0x$capability; expected 0x$abi for $PROFILE" >&2
                 exit 1
             }
         fi
