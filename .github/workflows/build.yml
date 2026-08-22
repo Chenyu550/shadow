@@ -63,6 +63,34 @@ jobs:
           p.write_text(s.replace(old, new))
           PY
 
+      - name: Add XPC headers to iOS 16.5 SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          DST="$THEOS/sdks/iPhoneOS16.5.sdk/usr/include"
+          IOS_SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
+          MAC_SDK="$(xcrun --sdk macosx --show-sdk-path)"
+
+          mkdir -p "$DST"
+
+          # Prefer the current Xcode iPhoneOS SDK.
+          if [ -d "$IOS_SDK/usr/include/xpc" ]; then
+            echo "Using XPC headers from iPhoneOS SDK:"
+            echo "$IOS_SDK/usr/include/xpc"
+            cp -R "$IOS_SDK/usr/include/xpc" "$DST/"
+          elif [ -d "$MAC_SDK/usr/include/xpc" ]; then
+            echo "iPhoneOS SDK has no XPC headers; falling back to macOS SDK:"
+            echo "$MAC_SDK/usr/include/xpc"
+            cp -R "$MAC_SDK/usr/include/xpc" "$DST/"
+          else
+            echo "Could not find XPC headers in Xcode SDKs"
+            exit 1
+          fi
+
+          echo "Installed XPC headers:"
+          ls -la "$DST/xpc"
+          test -f "$DST/xpc/xpc.h"
       - name: Build rootless dependencies
         run: |
           .github/scripts/build-deps.sh rootless
