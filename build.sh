@@ -16,7 +16,7 @@ rm -rf "$ROOT/build"
 mkdir -p "$ROOT/build"
 
 stage_deps() { # rootful-legacy|rootful-modern|rootless|roothide
-    local profile=$1 source_profile=$1 scheme=
+    local profile=$1 source_profile=$1 scheme= xpc=
     case "$profile" in
         rootful-legacy|rootful-modern) ;;
         rootless) scheme=rootless ;;
@@ -41,8 +41,15 @@ stage_deps() { # rootful-legacy|rootful-modern|rootless|roothide
     if [ -f "$PB/sandy/$source_profile/libSandy.h" ]; then
         cp "$PB/sandy/$source_profile/libSandy.h" "$INCLUDE_PATH/libSandy.h"
     fi
-    if [ "$profile" = rootful-legacy ]; then
-        local xpc=${XPC_HEADERS:-$THEOS/sdks/iPhoneOS14.5.sdk/usr/include/xpc}
+    case "$profile" in
+        rootful-legacy)
+            xpc=${XPC_HEADERS:-$THEOS/sdks/iPhoneOS14.5.sdk/usr/include/xpc}
+            ;;
+        rootless)
+            xpc=${XPC_HEADERS:-${PATCHED_SDKS_PATH:-$THEOS/sdks}/iPhoneOS16.5.sdk/usr/include/xpc}
+            ;;
+    esac
+    if [ -n "$xpc" ]; then
         [ -d "$xpc" ] || { echo "set XPC_HEADERS to an xpc headers directory" >&2; return 1; }
         cp -R "$xpc" "$INCLUDE_PATH/"
     fi
